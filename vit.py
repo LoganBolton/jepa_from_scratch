@@ -47,9 +47,11 @@ class ViT(nn.Module):
     
     def forward(self, x, mask_indices=None):
         x = self.patchify(x)
-        x = x + self.pos_embed # (b, num_patches, c)
+        x = x + self.pos_embed # (b, num_patches, D)
         
         if mask_indices is not None:
+            # change (B, n_keep) -> (B, n_keep, D)
+            mask_indices = mask_indices.unsqueeze(-1).expand(-1,-1,x.shape[-1])
         # drop patches
             x = torch.gather(x, 1, mask_indices)
         for block in self.blocks:
