@@ -105,8 +105,9 @@ def main():
     loader, sampler = build_loader(rank, world_size, is_main)
     context_encoder, prediction_encoder, target_encoder = build_models(device, local_rank)
 
+    params = list(context_encoder.parameters()) + list(prediction_encoder.parameters())
     optimizer = torch.optim.AdamW(
-        list(context_encoder.parameters()) + list(prediction_encoder.parameters()), lr=LR
+        params, lr=LR
     )
     
     scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=WARMUP_EPOCHS*len(loader), num_training_steps=EPOCHS*len(loader))
@@ -130,6 +131,7 @@ def main():
 
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(params, 1.0)
             optimizer.step()
             scheduler.step()
 
@@ -143,7 +145,7 @@ def main():
                 #     print(f"epoch {epoch} step {step} loss {loss.item():.4f} "
                 #           f"rep_std {rep_std:.4f} m {m:.5f}")
         if is_main:
-            wandb.log({"loss": loss.item(), "rep_std": rep_std, "ema_m": m, "epoch": epoch})
+            wandb.log({"loss": loss.item(), "rep_std": rep_std, "ema_m": m, "epoch": epoch, "LR": scheduler.get_last_lr()[0]})
             print(f"epoch {epoch} loss {loss.item():.4f} "
                     f"rep_std {rep_std:.4f}")
 
