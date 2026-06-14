@@ -39,6 +39,7 @@ def setup_ddp():
 def build_loader(rank, world_size, is_main):
     transform = T.Compose(
         [T.Resize((64, 64)), 
+         T.RandomHorizontalFlip(),
          T.ToTensor()]
         )
     dataset = torchvision.datasets.CIFAR10(
