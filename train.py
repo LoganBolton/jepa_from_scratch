@@ -1,3 +1,5 @@
+# uv run torchrun --nproc_per_node=2 train.py
+
 import os
 import copy
 import torch
@@ -15,9 +17,9 @@ from predictor import *
 from utils import *
 from mask import MaskData
 
-EPOCHS = 10
+EPOCHS = 1_000
 LR = 2e-4
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 NUM_TARGET_BLOCKS = 4
 EMA_START = 0.996
 EMA_END = 1.0
@@ -32,9 +34,12 @@ def setup_ddp():
 
 
 def build_loader(rank, world_size, is_main):
-    transform = T.Compose([T.Resize((64, 64)), T.ToTensor()])
+    transform = T.Compose(
+        [T.Resize((64, 64)), 
+         T.ToTensor()]
+        )
     dataset = torchvision.datasets.CIFAR10(
-        root="./data", train=True, download=is_main, transform=transform
+        root="./data", train=True, download=True, transform=transform
     )
     dist.barrier()
     sampler = DistributedSampler(
@@ -123,11 +128,15 @@ def main():
             ema_update(target_encoder, context_encoder.module, m)
             global_step += 1
 
-            if is_main:
-                wandb.log({"loss": loss.item(), "rep_std": rep_std, "ema_m": m, "epoch": epoch})
-                if step % 50 == 0:
-                    print(f"epoch {epoch} step {step} loss {loss.item():.4f} "
-                          f"rep_std {rep_std:.4f} m {m:.5f}")
+            # if is_main:
+            #     wandb.log({"loss": loss.item(), "rep_std": rep_std, "ema_m": m, "epoch": epoch})
+                # if step % 50 == 0:
+                #     print(f"epoch {epoch} step {step} loss {loss.item():.4f} "
+                #           f"rep_std {rep_std:.4f} m {m:.5f}")
+        if is_main:
+            wandb.log({"loss": loss.item(), "rep_std": rep_std, "ema_m": m, "epoch": epoch})
+            print(f"epoch {epoch} loss {loss.item():.4f} "
+                    f"rep_std {rep_std:.4f}")
 
     if is_main:
         wandb.finish()
