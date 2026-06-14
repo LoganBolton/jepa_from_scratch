@@ -10,3 +10,12 @@ dependencies = [
     "torchvision>=0.27.0",
     "wandb>=0.27.2",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu126" }]
+torchvision = [{ index = "pytorch-cu126" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
