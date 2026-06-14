@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from utils import *
 
 
 class VitBlock(nn.Module):
@@ -22,7 +23,7 @@ class VitBlock(nn.Module):
         return h
 
 class ViT(nn.Module):
-    def __init__(self, img_size=64, patch_size=4, hidden_dim=512, num_heads=8, num_layers=6):
+    def __init__(self, img_size=32, patch_size=4, hidden_dim=512, num_heads=8, num_layers=6):
         super().__init__()
         
         self.patch_size = patch_size
@@ -50,10 +51,8 @@ class ViT(nn.Module):
         x = x + self.pos_embed # (b, num_patches, D)
         
         if mask_indices is not None:
-            # change (B, n_keep) -> (B, n_keep, D)
-            mask_indices = mask_indices.unsqueeze(-1).expand(-1,-1,x.shape[-1])
-        # drop patches
-            x = torch.gather(x, 1, mask_indices)
+            x = gather_tokens(x, mask_indices)
+            
         for block in self.blocks:
             x = block(x)
             
