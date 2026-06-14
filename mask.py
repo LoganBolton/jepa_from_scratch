@@ -7,8 +7,8 @@ class MaskData():
         self.num_blocks = num_blocks
         self.TARGET_ASPECT_MIN = 0.75
         self.TARGET_ASPECT_MAX = 1.5
-        self.TARGET_SCALE_MIN = 0.2
-        self.TARGET_SCALE_MAX = 0.4
+        self.TARGET_SCALE_MIN = 0.15
+        self.TARGET_SCALE_MAX = 0.2
         
         self.CONTEXT_ASPECT_MIN = 0.85
         self.CONTEXT_ASPECT_MAX = 1.0
