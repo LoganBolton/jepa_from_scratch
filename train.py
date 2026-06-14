@@ -4,6 +4,7 @@ import os
 import copy
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
@@ -11,6 +12,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torchvision
 import torchvision.transforms as T
 import wandb
+from transformers import get_cosine_schedule_with_warmup
 
 from vit import *
 from predictor import *
@@ -18,11 +20,12 @@ from utils import *
 from mask import MaskData
 
 EPOCHS = 1_000
-LR = 2e-4
+LR = 1e-4
 BATCH_SIZE = 256
 NUM_TARGET_BLOCKS = 4
 EMA_START = 0.996
 EMA_END = 1.0
+WARMUP_EPOCHS = 10
 
 
 def setup_ddp():
@@ -81,6 +84,7 @@ def jepa_loss(imgs, context_encoder, prediction_encoder, target_encoder, masker,
 
     pred_embed = prediction_encoder(context_embed, context_idx, target_idx)
     target_embed = gather_tokens(full_reps, target_idx)
+    target_embed = F.layer_norm(target_embed, (target_embed.size(-1),))
 
     loss = loss_fn(pred_embed, target_embed)
     rep_std = full_reps.std(dim=0).mean().item()
@@ -104,10 +108,14 @@ def main():
     optimizer = torch.optim.AdamW(
         list(context_encoder.parameters()) + list(prediction_encoder.parameters()), lr=LR
     )
+    
+    scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=WARMUP_EPOCHS*len(loader), num_training_steps=EPOCHS*len(loader))
+
     loss_fn = nn.MSELoss()
     masker = MaskData(NUM_TARGET_BLOCKS, int(context_encoder.module.num_patches ** 0.5))
 
     total_steps = EPOCHS * len(loader)
+    
     global_step = 0
 
     for epoch in range(EPOCHS):
@@ -123,6 +131,7 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             m = EMA_START + (EMA_END - EMA_START) * (global_step / total_steps)
             ema_update(target_encoder, context_encoder.module, m)
