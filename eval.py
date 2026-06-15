@@ -38,13 +38,30 @@ def cache_features(encoder, loader, device="cuda"):
     return feats.to(device), labels.to(device)
 
 
+def subsample_per_class(labels, labels_per_class, seed=0):
+    """Indices for a class-balanced subset with `labels_per_class` each.
+
+    Simulates a low-label regime: SSL features barely care how many labels the
+    probe sees, supervised-from-scratch does. Deterministic given `seed`.
+    """
+    g = torch.Generator().manual_seed(seed)
+    keep = []
+    for c in labels.unique():
+        cls_idx = (labels == c).nonzero(as_tuple=True)[0]
+        perm = cls_idx[torch.randperm(cls_idx.numel(), generator=g)]
+        keep.append(perm[:labels_per_class])
+    return torch.cat(keep)
+
+
 def linear_probe(encoder, train_loader, test_loader, device="cuda",
-                 epochs=100, lr=1e-3, weight_decay=0.0, num_classes=10):
+                 epochs=100, lr=1e-3, weight_decay=0.0, num_classes=10,
+                 labels_per_class=None):
     """Freeze the encoder, train a single linear layer on its features.
 
     This is the standard SSL eval protocol and the fair comparison against a
     supervised backbone. Features are cached once since the encoder is frozen
-    and the eval transforms are deterministic.
+    and the eval transforms are deterministic. Set `labels_per_class` to probe
+    a low-label regime.
     """
     encoder.eval()
     for p in encoder.parameters():
@@ -52,6 +69,10 @@ def linear_probe(encoder, train_loader, test_loader, device="cuda",
 
     train_f, train_y = cache_features(encoder, train_loader, device)
     test_f, test_y = cache_features(encoder, test_loader, device)
+
+    if labels_per_class is not None:
+        idx = subsample_per_class(train_y.cpu(), labels_per_class).to(device)
+        train_f, train_y = train_f[idx], train_y[idx]
 
     # normalize features using train statistics
     mean = train_f.mean(dim=0, keepdim=True)

@@ -91,16 +91,29 @@ def jepa_loss(imgs, context_encoder, prediction_encoder, target_encoder, masker,
     return loss, rep_std
 
 
-def main(resume=None):
+def main(resume=None, wandb_id=None):
     rank, local_rank, world_size, device = setup_ddp()
     is_main = rank == 0
 
+    # load the checkpoint up front so we can recover the wandb run id before init
+    ckpt = None
+    if resume is not None:
+        # map to this rank's GPU so DDP states land on the right device
+        ckpt = torch.load(resume, map_location=device)
+
     if is_main:
-        wandb.init(project="jepa-from-scratch", config={
-            "epochs": EPOCHS, "lr": LR, "batch_size_per_gpu": BATCH_SIZE,
-            "world_size": world_size, "num_target_blocks": NUM_TARGET_BLOCKS,
-            "ema_start": EMA_START, "ema_end": EMA_END,
-        })
+        # prefer an explicit --wandb_id, else the id stored in the checkpoint
+        run_id = wandb_id or (ckpt.get("wandb_run_id") if ckpt else None)
+        wandb.init(
+            project="jepa-from-scratch",
+            id=run_id,
+            resume="must" if run_id else None,
+            config={
+                "epochs": EPOCHS, "lr": LR, "batch_size_per_gpu": BATCH_SIZE,
+                "world_size": world_size, "num_target_blocks": NUM_TARGET_BLOCKS,
+                "ema_start": EMA_START, "ema_end": EMA_END,
+            },
+        )
 
     loader, sampler = build_loader(rank, world_size, is_main)
     context_encoder, prediction_encoder, target_encoder = build_models(device, local_rank)
@@ -121,9 +134,7 @@ def main(resume=None):
     global_step = 0
     start_epoch = 0
 
-    if resume is not None:
-        # map to this rank's GPU so DDP states land on the right device
-        ckpt = torch.load(resume, map_location=device)
+    if ckpt is not None:
         context_encoder.module.load_state_dict(ckpt["context_encoder"])
         prediction_encoder.module.load_state_dict(ckpt["predictor"])
         target_encoder.load_state_dict(ckpt["target_encoder"])
@@ -165,6 +176,7 @@ def main(resume=None):
                 "predictor": prediction_encoder.module.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
+                "wandb_run_id": wandb.run.id,
             }, f"checkpoints/ckpt_{epoch}.pt")
         if epoch % EVAL_EVERY == 0 or epoch == 0:
             if is_main:
@@ -275,9 +287,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", action="store_true", help="train supervised ViT baseline instead of JEPA")
     parser.add_argument("--resume", type=str, default=None, help="path to a checkpoint to resume JEPA training from")
+    parser.add_argument("--wandb_id", type=str, default=None, help="wandb run id to resume logging into (overrides id stored in checkpoint)")
     args = parser.parse_args()
 
     if args.baseline:
         train_baseline()
     else:
-        main(resume=args.resume)
+        main(resume=args.resume, wandb_id=args.wandb_id)
