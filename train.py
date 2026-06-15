@@ -20,14 +20,15 @@ from utils import *
 from mask import MaskData
 from eval import knn_eval, build_eval_dataloaders
 
-EPOCHS = 1_000
+EPOCHS = 500
 LR = 1e-4
 BATCH_SIZE = 256
 NUM_TARGET_BLOCKS = 4
 EMA_START = 0.996
 EMA_END = 1.0
-WARMUP_EPOCHS = 10
-SAVE_EVERY = 20
+WARMUP_EPOCHS = 8
+SAVE_EVERY = 25
+EVAL_EVERY = 5
 
 
 def setup_ddp():
@@ -142,44 +143,41 @@ def main():
             m = EMA_START + (EMA_END - EMA_START) * (global_step / total_steps)
             ema_update(target_encoder, context_encoder.module, m)
             global_step += 1
-
-            # if is_main:
-            #     wandb.log({"loss": loss.item(), "rep_std": rep_std, "ema_m": m, "epoch": epoch})
-                # if step % 50 == 0:
-                #     print(f"epoch {epoch} step {step} loss {loss.item():.4f} "
-                #           f"rep_std {rep_std:.4f} m {m:.5f}")
+        
+        # save + eval first, so this epoch's knn_acc is available to log
         knn_acc = None
-        if epoch % SAVE_EVERY == 0:
+        if (epoch % SAVE_EVERY == 0 or epoch == 0) and is_main:
+            torch.save({
+                "epoch": epoch,
+                "global_step": global_step,
+                "target_encoder": target_encoder.state_dict(),
+                "context_encoder": context_encoder.module.state_dict(),  # .module unwraps DDP
+                "predictor": prediction_encoder.module.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            }, f"checkpoints/ckpt_{epoch}.pt")
+        if epoch % EVAL_EVERY == 0 or epoch == 0:
             if is_main:
-                torch.save({
-                    "epoch": epoch,
-                    "global_step": global_step,
-                    "target_encoder": target_encoder.state_dict(),
-                    "context_encoder": context_encoder.module.state_dict(),  # .module unwraps DDP
-                    "predictor": prediction_encoder.module.state_dict(),
-                    "optimizer": optimizer.state_dict(),
-                    "scheduler": scheduler.state_dict(),
-                }, f"checkpoints/ckpt_{epoch}.pt")
                 knn_acc = knn_eval(target_encoder, eval_train_loader, eval_test_loader, device)
-            dist.barrier()
+                print(f"knn accuracy: {knn_acc:.4f}")
+        dist.barrier()
 
         if is_main:
-            log = {"loss": loss.item(), 
-                    "rep_std": rep_std, 
-                    "ema_m": m,
-                    "epoch": epoch, 
-                    "LR": scheduler.get_last_lr()[0]}
+            log = {"loss": loss.item(),
+                   "rep_std": rep_std,
+                   "ema_m": m,
+                   "epoch": epoch,
+                   "LR": scheduler.get_last_lr()[0]}
             if knn_acc is not None:
                 log["knn_acc"] = knn_acc
             wandb.log(log, step=epoch)
-            
+
             print(f"epoch {epoch} loss {loss.item():.4f} "
-                    f"rep_std {rep_std:.4f}")
+                  f"rep_std {rep_std:.4f}")
 
     if is_main:
         wandb.finish()
     dist.destroy_process_group()
-
 
 if __name__ == "__main__":
     main()

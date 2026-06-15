@@ -58,3 +58,4 @@ class ViT(nn.Module):
             
         x = self.final_norm(x)
         return x
+        
