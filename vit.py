@@ -58,4 +58,15 @@ class ViT(nn.Module):
             
         x = self.final_norm(x)
         return x
+
         
+class ViTClassifier(nn.Module):
+    def __init__(self, encoder_dim):
+        super().__init__()
+        self.backbone = ViT(img_size=64, patch_size=4)
+        self.head = nn.Linear(512, 10)
+        
+    def forward(self, x):
+        x = self.backbone(x)
+        pooled = x.mean(dim=1)
+        return self.head(pooled)
