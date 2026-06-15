@@ -31,6 +31,61 @@ def extract_features(encoder, loader, device="cuda"):
         labels.append(y)
     return torch.cat(feats), torch.cat(labels)
 
+@torch.no_grad()
+def cache_features(encoder, loader, device="cuda"):
+    """Run the frozen encoder once and keep mean-pooled features on device."""
+    feats, labels = extract_features(encoder, loader, device)
+    return feats.to(device), labels.to(device)
+
+
+def linear_probe(encoder, train_loader, test_loader, device="cuda",
+                 epochs=100, lr=1e-3, weight_decay=0.0, num_classes=10):
+    """Freeze the encoder, train a single linear layer on its features.
+
+    This is the standard SSL eval protocol and the fair comparison against a
+    supervised backbone. Features are cached once since the encoder is frozen
+    and the eval transforms are deterministic.
+    """
+    encoder.eval()
+    for p in encoder.parameters():
+        p.requires_grad_(False)
+
+    train_f, train_y = cache_features(encoder, train_loader, device)
+    test_f, test_y = cache_features(encoder, test_loader, device)
+
+    # normalize features using train statistics
+    mean = train_f.mean(dim=0, keepdim=True)
+    std = train_f.std(dim=0, keepdim=True) + 1e-6
+    train_f = (train_f - mean) / std
+    test_f = (test_f - mean) / std
+
+    head = nn.Linear(train_f.size(1), num_classes).to(device)
+    optimizer = torch.optim.AdamW(head.parameters(), lr=lr, weight_decay=weight_decay)
+    loss_fn = nn.CrossEntropyLoss()
+
+    n = train_f.size(0)
+    batch_size = 1024
+    best_acc = 0.0
+    for _ in range(epochs):
+        head.train()
+        perm = torch.randperm(n, device=device)
+        for i in range(0, n, batch_size):
+            idx = perm[i:i + batch_size]
+            logits = head(train_f[idx])
+            loss = loss_fn(logits, train_y[idx])
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        head.eval()
+        with torch.no_grad():
+            preds = head(test_f).argmax(dim=1)
+            acc = (preds == test_y).float().mean().item()
+        best_acc = max(best_acc, acc)
+
+    return best_acc
+
+
 def knn_eval(encoder, train_loader, test_loader, device="cuda", k=20):
     train_f, train_y = extract_features(encoder, train_loader, device)
     train_f = F.normalize(train_f, dim=1)

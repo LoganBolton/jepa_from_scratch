@@ -228,6 +228,15 @@ def train_baseline():
             optimizer.step()
             scheduler.step()
 
+        if (epoch % SAVE_EVERY == 0 or epoch == 0) and is_main:
+            torch.save({
+                "epoch": epoch,
+                "backbone": model.module.backbone.state_dict(),  # frozen-probe target
+                "head": model.module.head.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "scheduler": scheduler.state_dict(),
+            }, f"checkpoints/baseline_{epoch}.pt")
+
         test_acc = None
         if epoch % EVAL_EVERY == 0 or epoch == 0:
             if is_main:
