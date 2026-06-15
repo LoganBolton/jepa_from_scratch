@@ -91,7 +91,7 @@ def jepa_loss(imgs, context_encoder, prediction_encoder, target_encoder, masker,
     return loss, rep_std
 
 
-def main():
+def main(resume=None):
     rank, local_rank, world_size, device = setup_ddp()
     is_main = rank == 0
 
@@ -117,10 +117,24 @@ def main():
     masker = MaskData(NUM_TARGET_BLOCKS, int(context_encoder.module.num_patches ** 0.5))
 
     total_steps = EPOCHS * len(loader)
-    
-    global_step = 0
 
-    for epoch in range(EPOCHS):
+    global_step = 0
+    start_epoch = 0
+
+    if resume is not None:
+        # map to this rank's GPU so DDP states land on the right device
+        ckpt = torch.load(resume, map_location=device)
+        context_encoder.module.load_state_dict(ckpt["context_encoder"])
+        prediction_encoder.module.load_state_dict(ckpt["predictor"])
+        target_encoder.load_state_dict(ckpt["target_encoder"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        scheduler.load_state_dict(ckpt["scheduler"])
+        global_step = ckpt["global_step"]
+        start_epoch = ckpt["epoch"] + 1  # the saved epoch already completed
+        if is_main:
+            print(f"resumed from {resume} at epoch {start_epoch} (global_step {global_step})")
+
+    for epoch in range(start_epoch, EPOCHS):
         sampler.set_epoch(epoch)
         for step, (imgs, _) in enumerate(loader):
             imgs = imgs.to(device, non_blocking=True)
@@ -260,9 +274,10 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", action="store_true", help="train supervised ViT baseline instead of JEPA")
+    parser.add_argument("--resume", type=str, default=None, help="path to a checkpoint to resume JEPA training from")
     args = parser.parse_args()
 
     if args.baseline:
         train_baseline()
     else:
-        main()
+        main(resume=args.resume)
