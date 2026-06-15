@@ -34,6 +34,8 @@ def main():
     parser.add_argument("--epochs", type=int, default=100, help="linear probe training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="linear probe learning rate")
     parser.add_argument("--no-knn", action="store_true", help="skip the kNN eval")
+    parser.add_argument("--labels-per-class", type=int, default=None,
+                        help="limit eval labels per class to simulate a low-label regime")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,13 +44,18 @@ def main():
 
     train_loader, test_loader = build_eval_dataloaders()
 
+    if args.labels_per_class is not None:
+        print(f"low-label regime: {args.labels_per_class} labels/class")
+
     if not args.no_knn:
-        knn_acc = knn_eval(encoder, train_loader, test_loader, device)
+        knn_acc = knn_eval(encoder, train_loader, test_loader, device,
+                           labels_per_class=args.labels_per_class)
         print(f"knn accuracy:          {knn_acc:.4f}")
 
     probe_acc = linear_probe(
         encoder, train_loader, test_loader, device,
         epochs=args.epochs, lr=args.lr,
+        labels_per_class=args.labels_per_class,
     )
     print(f"linear probe accuracy: {probe_acc:.4f}")
 

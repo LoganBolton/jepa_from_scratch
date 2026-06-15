@@ -107,14 +107,19 @@ def linear_probe(encoder, train_loader, test_loader, device="cuda",
     return best_acc
 
 
-def knn_eval(encoder, train_loader, test_loader, device="cuda", k=20):
+def knn_eval(encoder, train_loader, test_loader, device="cuda", k=20, labels_per_class=None):
     train_f, train_y = extract_features(encoder, train_loader, device)
     train_f = F.normalize(train_f, dim=1)
     test_f, test_y = extract_features(encoder, test_loader, device)
     test_f = F.normalize(test_f, dim=1)
-    
+
     train_f, train_y = train_f.to(device), train_y.to(device)
     test_f, test_y   = test_f.to(device), test_y.to(device)
+
+    if labels_per_class is not None:
+        idx = subsample_per_class(train_y.cpu(), labels_per_class).to(device)
+        train_f, train_y = train_f[idx], train_y[idx]
+        k = min(k, train_f.size(0))
 
     
     chunk_size = 256
