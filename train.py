@@ -2,6 +2,7 @@
 
 import os
 import copy
+import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,6 +30,25 @@ EMA_END = 1.0
 WARMUP_EPOCHS = 8
 SAVE_EVERY = 25
 EVAL_EVERY = 5
+
+def setup_logger(run_id):
+    """File + console logger keyed to the wandb run id, so resuming the same
+    run appends to the same log file instead of starting a fresh one."""
+    os.makedirs("logs", exist_ok=True)
+    logger = logging.getLogger("jepa")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    fmt = logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+
+    fh = logging.FileHandler(f"logs/{run_id}.log", mode="a")  # append across resumes
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+    return logger
+
 
 def setup_ddp():
     dist.init_process_group(backend="nccl")
@@ -95,14 +115,12 @@ def main(resume=None, wandb_id=None):
     rank, local_rank, world_size, device = setup_ddp()
     is_main = rank == 0
 
-    # load the checkpoint up front so we can recover the wandb run id before init
     ckpt = None
     if resume is not None:
-        # map to this rank's GPU so DDP states land on the right device
         ckpt = torch.load(resume, map_location=device)
 
+    logger = None
     if is_main:
-        # prefer an explicit --wandb_id, else the id stored in the checkpoint
         run_id = wandb_id or (ckpt.get("wandb_run_id") if ckpt else None)
         wandb.init(
             project="jepa-from-scratch",
@@ -114,6 +132,9 @@ def main(resume=None, wandb_id=None):
                 "ema_start": EMA_START, "ema_end": EMA_END,
             },
         )
+        logger = setup_logger(wandb.run.id)
+        wandb.define_metric("epoch")
+        wandb.define_metric("*", step_metric="epoch")
 
     loader, sampler = build_loader(rank, world_size, is_main)
     context_encoder, prediction_encoder, target_encoder = build_models(device, local_rank)
@@ -141,9 +162,9 @@ def main(resume=None, wandb_id=None):
         optimizer.load_state_dict(ckpt["optimizer"])
         scheduler.load_state_dict(ckpt["scheduler"])
         global_step = ckpt["global_step"]
-        start_epoch = ckpt["epoch"] + 1  # the saved epoch already completed
+        start_epoch = ckpt["epoch"] + 1 
         if is_main:
-            print(f"resumed from {resume} at epoch {start_epoch} (global_step {global_step})")
+            logger.info(f"resumed from {resume} at epoch {start_epoch} (global_step {global_step})")
 
     for epoch in range(start_epoch, EPOCHS):
         sampler.set_epoch(epoch)
@@ -165,14 +186,13 @@ def main(resume=None, wandb_id=None):
             ema_update(target_encoder, context_encoder.module, m)
             global_step += 1
         
-        # save + eval first, so this epoch's knn_acc is available to log
         knn_acc = None
         if (epoch % SAVE_EVERY == 0 or epoch == 0) and is_main:
             torch.save({
                 "epoch": epoch,
                 "global_step": global_step,
                 "target_encoder": target_encoder.state_dict(),
-                "context_encoder": context_encoder.module.state_dict(),  # .module unwraps DDP
+                "context_encoder": context_encoder.module.state_dict(),
                 "predictor": prediction_encoder.module.state_dict(),
                 "optimizer": optimizer.state_dict(),
                 "scheduler": scheduler.state_dict(),
@@ -181,7 +201,7 @@ def main(resume=None, wandb_id=None):
         if epoch % EVAL_EVERY == 0 or epoch == 0:
             if is_main:
                 knn_acc = knn_eval(target_encoder, eval_train_loader, eval_test_loader, device)
-                print(f"knn accuracy: {knn_acc:.4f}")
+                logger.info(f"knn accuracy: {knn_acc:.4f}")
         dist.barrier()
 
         if is_main:
@@ -192,10 +212,10 @@ def main(resume=None, wandb_id=None):
                    "LR": scheduler.get_last_lr()[0]}
             if knn_acc is not None:
                 log["knn_acc"] = knn_acc
-            wandb.log(log, step=epoch)
+            wandb.log(log)
 
-            print(f"epoch {epoch} loss {loss.item():.4f} "
-                  f"rep_std {rep_std:.4f}")
+            logger.info(f"epoch {epoch} loss {loss.item():.4f} "
+                        f"rep_std {rep_std:.4f}")
 
     if is_main:
         wandb.finish()
