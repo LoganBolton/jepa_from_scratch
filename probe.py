@@ -8,7 +8,7 @@ import argparse
 import torch
 
 from vit import ViT
-from eval import build_eval_dataloaders, knn_eval, linear_probe
+from eval import build_eval_dataloaders, knn_eval, linear_probe, NUM_CLASSES
 
 
 def load_encoder(ckpt_path, device):
@@ -31,7 +31,9 @@ def load_encoder(ckpt_path, device):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("ckpt", help="path to a JEPA checkpoint, e.g. checkpoints/ckpt_175.pt")
-    parser.add_argument("--epochs", type=int, default=100, help="linear probe training epochs")
+    parser.add_argument("--dataset", default="cifar10", choices=list(NUM_CLASSES),
+                        help="dataset to probe transfer on (eurosat = domain-shift target)")
+    parser.add_argument("--epochs", type=int, default=10, help="linear probe training epochs")
     parser.add_argument("--lr", type=float, default=1e-3, help="linear probe learning rate")
     parser.add_argument("--no-knn", action="store_true", help="skip the kNN eval")
     parser.add_argument("--labels-per-class", type=int, default=None,
@@ -41,8 +43,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     encoder, epoch, kind = load_encoder(args.ckpt, device)
     print(f"loaded {args.ckpt} ({kind}, epoch {epoch})")
+    print(f"probing on {args.dataset} ({NUM_CLASSES[args.dataset]} classes)")
 
-    train_loader, test_loader = build_eval_dataloaders()
+    train_loader, test_loader = build_eval_dataloaders(dataset=args.dataset)
 
     if args.labels_per_class is not None:
         print(f"low-label regime: {args.labels_per_class} labels/class")
@@ -55,6 +58,7 @@ def main():
     probe_acc = linear_probe(
         encoder, train_loader, test_loader, device,
         epochs=args.epochs, lr=args.lr,
+        num_classes=NUM_CLASSES[args.dataset],
         labels_per_class=args.labels_per_class,
     )
     print(f"linear probe accuracy: {probe_acc:.4f}")

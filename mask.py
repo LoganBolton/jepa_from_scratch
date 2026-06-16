@@ -18,10 +18,10 @@ class MaskData():
         
     def get_block(self, grid_size, scale_min, scale_max, aspect_min, aspect_max):
         indices = []
-        width = grid_size * random.uniform(scale_min, scale_max)
-        height = width * random.uniform(aspect_min, aspect_max)
-        width = int(min(width, grid_size))
-        height = int(min(height, grid_size))
+        max_keep = random.uniform(scale_min, scale_max) * grid_size * grid_size
+        aspect = random.uniform(aspect_min, aspect_max)
+        width = int(min(round((max_keep / aspect) ** 0.5), grid_size))
+        height = int(min(round((max_keep * aspect) ** 0.5), grid_size))
         
         curr_x = random.randint(0, grid_size-width)
         curr_y = random.randint(0, grid_size-height)

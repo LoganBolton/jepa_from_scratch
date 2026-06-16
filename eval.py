@@ -10,14 +10,34 @@ import torchvision
 import torchvision.transforms as T
 import torchvision.datasets.cifar
 
-def build_eval_dataloaders(batch_size=256):
+# Datasets the frozen encoder can be probed on, with their class counts. CIFAR-10
+# is the in-domain default; EuroSAT (64x64 satellite imagery, native resolution)
+# is a real domain-shift transfer target.
+NUM_CLASSES = {"cifar10": 10, "eurosat": 10}
+
+
+def build_eval_dataloaders(batch_size=256, dataset="cifar10"):
     transform = T.Compose([T.Resize((64, 64)), T.ToTensor()])
-    train_set = torchvision.datasets.CIFAR10(root="./data", train=True,  download=True, transform=transform)
-    test_set  = torchvision.datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+
+    if dataset == "cifar10":
+        train_set = torchvision.datasets.CIFAR10(root="./data", train=True,  download=True, transform=transform)
+        test_set  = torchvision.datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+    elif dataset == "eurosat":
+        # EuroSAT ships as one pool of 27k images with no train/test split, so
+        # carve a deterministic 80/20 split. Both halves use the same eval
+        # transform (no augmentation), matching the CIFAR probe protocol.
+        full = torchvision.datasets.EuroSAT(root="./data", download=True, transform=transform)
+        n_test = len(full) // 5
+        n_train = len(full) - n_test
+        train_set, test_set = torch.utils.data.random_split(
+            full, [n_train, n_test], generator=torch.Generator().manual_seed(0)
+        )
+    else:
+        raise ValueError(f"unknown dataset {dataset!r}; choose from {list(NUM_CLASSES)}")
 
     train_loader = DataLoader(train_set, batch_size = batch_size, shuffle=False, num_workers=2)
     test_loader = DataLoader(test_set, batch_size = batch_size, shuffle=False, num_workers=2)
-    
+
     return train_loader, test_loader
 
 @torch.no_grad()
@@ -54,7 +74,7 @@ def subsample_per_class(labels, labels_per_class, seed=0):
 
 
 def linear_probe(encoder, train_loader, test_loader, device="cuda",
-                 epochs=100, lr=1e-3, weight_decay=0.0, num_classes=10,
+                 epochs=10, lr=1e-3, weight_decay=0.0, num_classes=10,
                  labels_per_class=None):
     """Freeze the encoder, train a single linear layer on its features.
 
