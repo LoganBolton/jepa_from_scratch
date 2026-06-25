@@ -22,7 +22,7 @@ from mask import MaskData
 from eval import knn_eval, build_eval_dataloaders
 
 EPOCHS = 500
-LR = 1e-4
+LR = 1e-3
 BATCH_SIZE = 256
 NUM_TARGET_BLOCKS = 4
 EMA_START = 0.996
